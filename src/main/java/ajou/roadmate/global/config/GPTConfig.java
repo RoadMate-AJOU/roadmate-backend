@@ -1,4 +1,4 @@
-package ajou.roadmate.gpt.config;
+package ajou.roadmate.global.config;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -10,6 +10,7 @@ public class GPTConfig {
 
     @Value("${gpt.api.key}")
     private String apiKey;
+
     @Bean
     public RestTemplate restTemplate(){
         RestTemplate template = new RestTemplate();
