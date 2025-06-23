@@ -10,4 +10,7 @@ import java.util.List;
 public class ChatRequest {
 
     private List<Message> messages;
+    private String model;
+    private int max_tokens;
+    private double temperature;
 }
