@@ -60,7 +60,7 @@ public class RouteController {
 
         log.info("경로 탐색 요청 - 출발지: {} ({}, {}), 목적지: {} ({}, {})",
                 request.getStartName(), request.getStartLat(), request.getStartLon(),
-🌟request.getEndName(), request.getEndLat(), request.getEndLon());
+                request.getEndName(), request.getEndLat(), request.getEndLon());
 
         RouteResponse response = tmapRouteService.searchRoute(request);
 
