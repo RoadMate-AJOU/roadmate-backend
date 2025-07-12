@@ -14,6 +14,9 @@ import lombok.NoArgsConstructor;
 @Schema(description = "경로 탐색 요청 데이터")
 public class RouteRequest {
 
+    @NotNull(message = "세션 아이디는 필수입니다.")
+    private String sessionId;
+
     @NotNull(message = "출발지 위도가 필요합니다")
     @Schema(description = "출발지 위도", example = "37.2816", required = true)
     private Double startLat;
