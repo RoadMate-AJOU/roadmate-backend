@@ -2,6 +2,8 @@ package ajou.roadmate.route.service;
 
 import ajou.roadmate.global.exception.CustomException;
 import ajou.roadmate.global.exception.RouteErrorCode;
+import ajou.roadmate.gpt.dto.ChatContext;
+import ajou.roadmate.gpt.service.ContextService;
 import ajou.roadmate.route.dto.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -31,6 +33,7 @@ public class TmapRouteService {
     private final RestTemplate restTemplate;
 
     private final AccessibilityService accessibilityService;
+    private final ContextService contextService;
 
     public RouteResponse searchRoute(RouteRequest request) {
         try {
@@ -45,6 +48,10 @@ public class TmapRouteService {
 
             log.info("경로 탐색 완료 - 총 거리: {}m, 총 시간: {}초",
                     response.getTotalDistance(), response.getTotalTime());
+
+            ChatContext context = contextService.getContext(request.getSessionId());
+            context.setRouteResponse(response);
+            contextService.saveContext(context);
 
             return response;
 
