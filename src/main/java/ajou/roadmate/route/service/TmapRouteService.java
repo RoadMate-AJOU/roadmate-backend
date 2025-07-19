@@ -4,9 +4,11 @@ import ajou.roadmate.global.exception.CustomException;
 import ajou.roadmate.global.exception.RouteErrorCode;
 import ajou.roadmate.gpt.dto.ChatContext;
 import ajou.roadmate.gpt.service.ContextService;
+import ajou.roadmate.gpt.service.FeedbackService;
 import ajou.roadmate.route.dto.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
@@ -35,7 +37,11 @@ public class TmapRouteService {
     private final AccessibilityService accessibilityService;
     private final ContextService contextService;
 
-    public RouteResponse searchRoute(RouteRequest request) {
+    // FeedbackService를 Optional로 처리
+    @Autowired(required = false)
+    private FeedbackService feedbackService;
+
+    public RouteResponse searchRoute(RouteRequest request, String userId) {
         try {
             validateRequest(request);
 
@@ -44,14 +50,27 @@ public class TmapRouteService {
             log.info("목적지: {} ({}, {})", request.getEndName(), request.getEndLat(), request.getEndLon());
 
             TmapRouteResponse tmapResponse = callTmapRouteAPI(request);
-            RouteResponse response = processTmapRouteResponse(tmapResponse);
+            RouteResponse response = processTmapRouteResponse(tmapResponse, request.getSessionId(), userId);
 
             log.info("경로 탐색 완료 - 총 거리: {}m, 총 시간: {}초",
                     response.getTotalDistance(), response.getTotalTime());
 
-            ChatContext context = contextService.getContext(request.getSessionId());
-            context.setRouteResponse(response);
-            contextService.saveContext(context);
+            // ChatContext 처리를 Optional로 변경
+            try {
+                ChatContext context;
+                try {
+                    context = contextService.getContext(request.getSessionId());
+                } catch (CustomException e) {
+                    // 컨텍스트가 없으면 새로 생성
+                    context = new ChatContext();
+                    context.setSessionId(request.getSessionId());
+                }
+
+                context.setRouteResponse(response);
+                contextService.saveContext(context);
+            } catch (Exception e) {
+                log.warn("컨텍스트 저장 실패 (무시하고 계속 진행): {}", e.getMessage());
+            }
 
             return response;
 
@@ -91,73 +110,45 @@ public class TmapRouteService {
         requestBody.put("count", 5); // 최대 5개 경로 요청
         requestBody.put("lang", 0);
         requestBody.put("format", "json");
+        requestBody.put("searchOption", request.getSearchOption() != null ? request.getSearchOption() : "0");
+
+        // 교통수단 포함 설정 (지하철 우선)
+        requestBody.put("subwayBusCount", 5); // 지하철+버스 조합 경로
+        requestBody.put("subwayCount", 3);    // 지하철 전용 경로
+        requestBody.put("busCount", 2);       // 버스 전용 경로
 
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
 
         try {
-            log.info("T맵 경로 탐색 API 호출: {}", tmapRouteApiUrl);
-            log.debug("요청 바디: {}", requestBody);
-
             ResponseEntity<TmapRouteResponse> response = restTemplate.exchange(
                     tmapRouteApiUrl, HttpMethod.POST, entity, TmapRouteResponse.class);
-
-            log.info("T맵 API 응답 상태: {}", response.getStatusCode());
 
             if (response.getBody() == null) {
                 log.warn("T맵 API 응답이 비어있습니다.");
                 throw new CustomException(RouteErrorCode.ROUTE_NOT_FOUND);
             }
 
-            // 응답 구조 확인을 위한 로깅
-            try {
-                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-                String responseJson = mapper.writeValueAsString(response.getBody());
-                log.info("T맵 API 응답 내용 (처음 500자): {}",
-                        responseJson.length() > 500 ? responseJson.substring(0, 500) + "..." : responseJson);
-            } catch (Exception e) {
-                log.warn("응답 JSON 변환 실패: {}", e.getMessage());
-            }
-
             return response.getBody();
 
         } catch (Exception e) {
-            log.error("T맵 경로 탐색 API 호출 실패");
-            log.error("Exception Type: {}", e.getClass().getSimpleName());
-            log.error("Exception Message: {}", e.getMessage());
-            log.error("요청 URL: {}", tmapRouteApiUrl);
-            log.error("요청 바디: {}", requestBody);
-
-            if (e instanceof org.springframework.web.client.HttpClientErrorException) {
-                org.springframework.web.client.HttpClientErrorException httpError =
-                        (org.springframework.web.client.HttpClientErrorException) e;
-                log.error("HTTP Status Code: {}", httpError.getStatusCode());
-                log.error("HTTP Response Body: {}", httpError.getResponseBodyAsString());
-            }
-
+            log.error("T맵 경로 탐색 API 호출 실패: {}", e.getMessage());
             throw new CustomException(RouteErrorCode.TMAP_ROUTE_API_ERROR);
         }
     }
 
-    private RouteResponse processTmapRouteResponse(TmapRouteResponse tmapResponse) {
+    private RouteResponse processTmapRouteResponse(TmapRouteResponse tmapResponse, String sessionId, String userId) {
         if (tmapResponse == null) {
             throw new CustomException(RouteErrorCode.ROUTE_NOT_FOUND);
         }
 
         try {
-            // T맵 API 응답을 JSON으로 변환하여 실제 구조 확인
             com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
             String jsonString = mapper.writeValueAsString(tmapResponse);
 
-            log.info("=== T맵 API 전체 응답 ===");
-            log.info(jsonString);
-            log.info("=== 응답 끝 ===");
-
-            // Map으로 변환하여 동적으로 접근
             @SuppressWarnings("unchecked")
             Map<String, Object> responseMap = mapper.readValue(jsonString, Map.class);
 
             if (!responseMap.containsKey("metaData")) {
-                log.warn("metaData가 없습니다. 사용 가능한 키들: {}", responseMap.keySet());
                 return createFallbackResponse();
             }
 
@@ -165,7 +156,6 @@ public class TmapRouteService {
             Map<String, Object> metaData = (Map<String, Object>) responseMap.get("metaData");
 
             if (!metaData.containsKey("plan")) {
-                log.warn("plan이 없습니다. metaData 키들: {}", metaData.keySet());
                 return createFallbackResponse();
             }
 
@@ -173,7 +163,6 @@ public class TmapRouteService {
             Map<String, Object> plan = (Map<String, Object>) metaData.get("plan");
 
             if (!plan.containsKey("itineraries")) {
-                log.warn("itineraries가 없습니다. plan 키들: {}", plan.keySet());
                 return createFallbackResponse();
             }
 
@@ -181,19 +170,16 @@ public class TmapRouteService {
             List<Map<String, Object>> itineraries = (List<Map<String, Object>>) plan.get("itineraries");
 
             if (itineraries.isEmpty()) {
-                log.warn("경로가 없습니다.");
                 return createFallbackResponse();
             }
 
-            // 경로 분석 및 선택
             List<RouteCandidate> routeCandidates = analyzeRoutes(itineraries);
-            Map<String, Object> bestRoute = selectBestRoute(routeCandidates);
+            Map<String, Object> bestRoute = selectBestRoute(routeCandidates, userId);
             RouteCandidate selectedCandidate = routeCandidates.stream()
                     .filter(c -> c.getRouteData() == bestRoute)
                     .findFirst()
                     .orElse(routeCandidates.get(0));
 
-            // 선택된 경로의 상세 정보 처리
             return buildRouteResponse(bestRoute, selectedCandidate.getAccessibilityScore());
 
         } catch (Exception e) {
@@ -203,7 +189,6 @@ public class TmapRouteService {
     }
 
     private List<RouteCandidate> analyzeRoutes(List<Map<String, Object>> itineraries) {
-        log.info("=== 찾은 경로 수: {} ===", itineraries.size());
         List<RouteCandidate> routeCandidates = new ArrayList<>();
 
         for (int i = 0; i < itineraries.size(); i++) {
@@ -213,10 +198,8 @@ public class TmapRouteService {
             Integer totalDistance = getIntegerValue(route, "totalDistance", 0);
             Integer transferCount = getIntegerValue(route, "transferCount", 0);
 
-            // 경로의 역 목록 추출
             List<String> stationNames = extractStationNames(route);
 
-            // 접근성 점수 계산
             AccessibilityService.RouteAccessibilityScore accessibilityScore =
                     accessibilityService.calculateRouteAccessibilityScore(stationNames, totalWalkTime);
 
@@ -232,42 +215,70 @@ public class TmapRouteService {
                     .build();
 
             routeCandidates.add(candidate);
-
-            log.info("경로 {}: 총시간={}분, 도보시간={}분, 총거리={}m, 환승={}회",
-                    i + 1, totalTime/60, totalWalkTime/60, totalDistance, transferCount);
-            log.info("  접근성: 엘리베이터={}개/{}, 에스컬레이터={}개/{}, 접근성점수={:.1f}",
-                    accessibilityScore.getElevatorCount(), accessibilityScore.getTotalStations(),
-                    accessibilityScore.getEscalatorCount(), accessibilityScore.getTotalStations(),
-                    accessibilityScore.getTotalScore());
-            log.info("  경유역: {}", String.join(" → ", stationNames));
         }
 
         return routeCandidates;
     }
 
-    private Map<String, Object> selectBestRoute(List<RouteCandidate> candidates) {
-        log.info("=== 경로 선택 알고리즘 시작 ===");
+    private Map<String, Object> selectBestRoute(List<RouteCandidate> candidates, String userId) {
+        Map<String, Integer> feedbackCounts = new HashMap<>();
 
-        // 접근성 점수 기준 정렬 (높은 순)
-        candidates.sort((a, b) -> Double.compare(
-                b.getAccessibilityScore().getTotalScore(),
-                a.getAccessibilityScore().getTotalScore()));
-
-        // 상위 후보들 로그 출력
-        for (int i = 0; i < Math.min(3, candidates.size()); i++) {
-            RouteCandidate candidate = candidates.get(i);
-            log.info("순위 {}: 접근성점수={:.1f}, 도보시간={}분, 엘리베이터={}개",
-                    i + 1,
-                    candidate.getAccessibilityScore().getTotalScore(),
-                    candidate.getTotalWalkTime() / 60,
-                    candidate.getAccessibilityScore().getElevatorCount());
+        if (feedbackService != null) {
+            try {
+                feedbackCounts = feedbackService.getFeedbackCounts(userId);
+            } catch (Exception e) {
+                log.warn("FeedbackService 호출 실패, 기본값 사용: {}", e.getMessage());
+            }
         }
 
+        int walkWeight = feedbackCounts.getOrDefault("walk", 2);
+        int transferWeight = feedbackCounts.getOrDefault("transfer", 0);
+        int totalTimeWeight = feedbackCounts.getOrDefault("totalTime", 3);
+        int elevatorWeight = feedbackCounts.getOrDefault("elevator", 2);
+        int escalatorWeight = feedbackCounts.getOrDefault("escalator", 2);
+
+        for (RouteCandidate candidate : candidates) {
+            double score = calculateRouteScore(candidate, walkWeight, transferWeight, totalTimeWeight, elevatorWeight, escalatorWeight);
+            candidate.setWeightedScore(score);
+        }
+
+        candidates.sort((a, b) -> Double.compare(a.getWeightedScore(), b.getWeightedScore()));
+
         RouteCandidate selected = candidates.get(0);
-        log.info("최종 선택: 접근성 점수 {:.1f}점으로 선택됨",
-                selected.getAccessibilityScore().getTotalScore());
 
         return selected.getRouteData();
+    }
+
+    private double calculateRouteScore(RouteCandidate candidate, int walkWeight, int transferWeight,
+                                       int totalTimeWeight, int elevatorWeight, int escalatorWeight) {
+        double maxWalkTime = 1800.0;
+        double maxTotalTime = 7200.0;
+        double maxTransferCount = 5.0;
+
+        double normalizedWalkTime = candidate.getTotalWalkTime() / maxWalkTime;
+        double walkScore = normalizedWalkTime * walkWeight;
+
+        double normalizedTransferCount = candidate.getTransferCount() / maxTransferCount;
+        double transferScore = normalizedTransferCount * transferWeight;
+
+        double normalizedTotalTime = candidate.getTotalTime() / maxTotalTime;
+        double timeScore = normalizedTotalTime * totalTimeWeight;
+
+        double elevatorRatio = 0.0;
+        if (candidate.getAccessibilityScore().getTotalStations() > 0) {
+            elevatorRatio = (double) candidate.getAccessibilityScore().getElevatorCount() /
+                    candidate.getAccessibilityScore().getTotalStations();
+        }
+        double elevatorScore = -(elevatorRatio * elevatorWeight);
+
+        double escalatorRatio = 0.0;
+        if (candidate.getAccessibilityScore().getTotalStations() > 0) {
+            escalatorRatio = (double) candidate.getAccessibilityScore().getEscalatorCount() /
+                    candidate.getAccessibilityScore().getTotalStations();
+        }
+        double escalatorScore = -(escalatorRatio * escalatorWeight);
+
+        return walkScore + transferScore + timeScore + elevatorScore + escalatorScore;
     }
 
     private RouteResponse buildRouteResponse(Map<String, Object> selectedRoute,
@@ -275,27 +286,14 @@ public class TmapRouteService {
 
         List<RouteResponse.GuideInfo> guides = new ArrayList<>();
 
-        // 기본 정보 추출
         Integer totalDistance = getIntegerValue(selectedRoute, "totalDistance", 0);
         Integer totalTime = getIntegerValue(selectedRoute, "totalTime", 0);
-        Integer totalWalkTime = getIntegerValue(selectedRoute, "totalWalkTime", 0);
         Integer totalFare = extractTotalFare(selectedRoute);
 
-        // 출발지/도착지 좌표 추출
         RouteResponse.Location startLocation = extractStartLocation(selectedRoute);
         RouteResponse.Location endLocation = extractEndLocation(selectedRoute);
 
-        // 경로 구간(legs) 처리
         processRouteLegs(selectedRoute, guides);
-
-        log.info("=== 최종 결과 ===");
-        log.info("총 거리: {}m, 총 시간: {}분, 도보 시간: {}분, 요금: {}원",
-                totalDistance, totalTime/60, totalWalkTime/60, totalFare);
-        log.info("접근성: 엘리베이터 {}개, 에스컬레이터 {}개, 접근성 비율: {:.1f}%",
-                accessibilityScore.getElevatorCount(),
-                accessibilityScore.getEscalatorCount(),
-                accessibilityScore.getAccessibilityRate());
-        log.info("길안내 수: {}", guides.size());
 
         return RouteResponse.builder()
                 .totalDistance(totalDistance)
@@ -317,7 +315,6 @@ public class TmapRouteService {
     }
 
     private void processRouteLegs(Map<String, Object> selectedRoute, List<RouteResponse.GuideInfo> guides) {
-
         if (!selectedRoute.containsKey("legs")) {
             return;
         }
@@ -325,93 +322,81 @@ public class TmapRouteService {
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> legs = (List<Map<String, Object>>) selectedRoute.get("legs");
 
-        log.info("=== 경로 구간 상세 정보 ===");
         for (int i = 0; i < legs.size(); i++) {
             Map<String, Object> leg = legs.get(i);
             String mode = (String) leg.get("mode");
-            Integer sectionTime = getIntegerValue(leg, "sectionTime", 0);
-            Integer distance = getIntegerValue(leg, "distance", 0);
 
-            String startName = getLocationName(leg, "start");
-            String endName = getLocationName(leg, "end");
-            String route = (String) leg.get("route");
-            String routeId = (String) leg.get("routeId");
-
-            log.info("구간 {}: {} | {}→{} | {}분, {}m | 노선: {}",
-                    i + 1, mode, startName, endName, sectionTime/60, distance, route);
-
-            // 시작/끝 위치 정보 생성
             RouteResponse.Location startLocation = createLocationFromLeg(leg, "start");
             RouteResponse.Location endLocation = createLocationFromLeg(leg, "end");
 
-            // 경로 linestring 추출
-            String lineString = extractLineString(leg, guides, i, startLocation, endLocation);
-
-            // 구간별 주요 길안내 정보 생성
-            addMainGuideInfo(leg, guides, distance, sectionTime, route, routeId,
-                    startLocation, endLocation, lineString, mode, startName);
-        }
-    }
-
-    private String extractLineString(Map<String, Object> leg, List<RouteResponse.GuideInfo> guides,
-                                     int segmentIndex, RouteResponse.Location startLocation, RouteResponse.Location endLocation) {
-
-        String mode = (String) leg.get("mode");
-        String lineString = "";
-
-        if ("WALK".equals(mode) && leg.containsKey("steps")) {
-            // 도보 구간 처리
-            @SuppressWarnings("unchecked")
-            List<Map<String, Object>> steps = (List<Map<String, Object>>) leg.get("steps");
-
-            for (Map<String, Object> step : steps) {
-                String stepLinestring = (String) step.get("linestring");
-                String description = (String) step.get("description");
-                String streetName = (String) step.get("streetName");
-                Integer stepDistance = getIntegerValue(step, "distance", 0);
-
-                if (stepLinestring != null) {
-                    lineString += stepLinestring + " ";
-                }
-
-                // 상세 도보 안내 추가
-                if (description != null && !description.trim().isEmpty()) {
-                    String detailedGuidance = streetName != null && !streetName.trim().isEmpty()
-                            ? streetName + ": " + description : description;
-
-                    guides.add(RouteResponse.GuideInfo.builder()
-                            .guidance(detailedGuidance)
-                            .distance(stepDistance)
-                            .time(0)
-                            .transportType("WALK")
-                            .routeName(streetName)
-                            .startLocation(startLocation)
-                            .endLocation(endLocation)
-                            .lineString(stepLinestring)
-                            .build());
-                }
+            if ("WALK".equals(mode) && leg.containsKey("steps")) {
+                processWalkSteps(leg, guides, startLocation, endLocation);
+            } else {
+                addTransportGuideInfo(leg, guides, startLocation, endLocation, mode);
             }
-        } else if (leg.containsKey("passShape")) {
-            // 대중교통 구간 처리
-            @SuppressWarnings("unchecked")
-            Map<String, Object> passShape = (Map<String, Object>) leg.get("passShape");
-            lineString = (String) passShape.get("linestring");
         }
-
-        return lineString != null ? lineString.trim() : "";
     }
 
-    private void addMainGuideInfo(Map<String, Object> leg, List<RouteResponse.GuideInfo> guides,
-                                  Integer distance, Integer sectionTime, String route, String routeId,
-                                  RouteResponse.Location startLocation, RouteResponse.Location endLocation,
-                                  String lineString, String mode, String startName) {
+    private void processWalkSteps(Map<String, Object> leg, List<RouteResponse.GuideInfo> guides,
+                                  RouteResponse.Location legStartLocation, RouteResponse.Location legEndLocation) {
 
-        String mainGuidance = createDetailedGuidanceText(leg);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> steps = (List<Map<String, Object>>) leg.get("steps");
+
+        for (Map<String, Object> step : steps) {
+            String description = (String) step.get("description");
+            String streetName = (String) step.get("streetName");
+            Integer stepDistance = getIntegerValue(step, "distance", 0);
+            String stepLinestring = (String) step.get("linestring");
+
+            if (description != null && !description.trim().isEmpty()) {
+                // T맵 description에서 출구 정보 포맷팅
+                String formattedDescription = formatDescriptionWithExit(description);
+
+                guides.add(RouteResponse.GuideInfo.builder()
+                        .guidance(formattedDescription)  // 포맷팅된 description 사용
+                        .distance(stepDistance)
+                        .time(0)
+                        .transportType("WALK")
+                        .routeName(streetName)
+                        .color(null)
+                        .startLocation(legStartLocation)
+                        .endLocation(legEndLocation)
+                        .lineString(stepLinestring)
+                        .build());
+            }
+        }
+    }
+
+    private String formatDescriptionWithExit(String description) {
+        if (description == null) {
+            return description;
+        }
+
+        // "불광역  6번출구 에서 직진 후" → "불광역 6번 출구 에서 직진 후"
+        if (description.contains("번출구")) {
+            return description.replaceAll("(\\S+?)(\\d+)번출구", "$1 $2번 출구");
+        }
+
+        return description;
+    }
+
+    private void addTransportGuideInfo(Map<String, Object> leg, List<RouteResponse.GuideInfo> guides,
+                                       RouteResponse.Location startLocation, RouteResponse.Location endLocation, String mode) {
+
+        Integer distance = getIntegerValue(leg, "distance", 0);
+        Integer sectionTime = getIntegerValue(leg, "sectionTime", 0);
+        String route = (String) leg.get("route");
+        String routeId = (String) leg.get("routeId");
+        String routeColor = (String) leg.get("routeColor");
+        String lineString = extractLineString(leg);
+
         String busNumber = extractBusNumber(route);
+        String guidance = createSimpleGuidanceText(leg);
 
-        // 역 접근성 정보 (대중교통 구간만)
         RouteResponse.StationAccessibility stationAccessibility = null;
         if (!"WALK".equals(mode)) {
+            String startName = getLocationName(leg, "start");
             AccessibilityService.StationAccessibility accessibility =
                     accessibilityService.getStationAccessibility(startName);
 
@@ -425,15 +410,16 @@ public class TmapRouteService {
                     .build();
         }
 
-        if (mainGuidance != null && !mainGuidance.trim().isEmpty()) {
+        if (guidance != null && !guidance.trim().isEmpty()) {
             guides.add(RouteResponse.GuideInfo.builder()
-                    .guidance(mainGuidance)
+                    .guidance(guidance)
                     .distance(distance)
                     .time(sectionTime)
                     .transportType(mode)
                     .routeName(route)
                     .busNumber(busNumber)
                     .busRouteId(routeId)
+                    .color(routeColor)
                     .startLocation(startLocation)
                     .endLocation(endLocation)
                     .lineString(lineString)
@@ -442,7 +428,61 @@ public class TmapRouteService {
         }
     }
 
-    // Helper methods
+    private String[] extractStationAndExit(String guidance) {
+        String stationName = null;
+        String exitInfo = null;
+
+        if (guidance == null) {
+            return new String[]{null, null};
+        }
+
+        // "상왕십리역에서 간선:463 탑승 → 역삼역6번출구 (35분, 7599m)" 패턴 분석
+        // "→" 뒤의 부분에서 역명과 출구 정보 추출
+        if (guidance.contains("→")) {
+            String[] parts = guidance.split("→");
+            if (parts.length > 1) {
+                String destination = parts[1].trim();
+
+                // "역삼역6번출구 (35분, 7599m)" 에서 역명과 출구 추출
+                if (destination.contains("번출구")) {
+                    // 정규표현식: (역명)(숫자)번출구
+                    java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("(.+?)(\\d+)번출구");
+                    java.util.regex.Matcher matcher = pattern.matcher(destination);
+
+                    if (matcher.find()) {
+                        stationName = matcher.group(1).trim();  // "역삼역"
+                        String exitNumber = matcher.group(2);   // "6"
+                        exitInfo = exitNumber + "번 출구";       // "6번 출구"
+
+                        log.debug("역명/출구 추출: '{}' → 역명='{}', 출구='{}'", destination, stationName, exitInfo);
+                    }
+                } else {
+                    // 출구 정보가 없는 경우, 괄호 앞까지가 역명
+                    if (destination.contains("(")) {
+                        stationName = destination.substring(0, destination.indexOf("(")).trim();
+                    } else {
+                        stationName = destination.trim();
+                    }
+                }
+            }
+        }
+
+        return new String[]{stationName, exitInfo};
+    }
+
+    private String extractExitInfoFromDescription(String description) {
+        if (description == null) return null;
+
+        if (description.contains("번출구")) {
+            String exitNumber = description.replaceAll(".*?(\\d+)번출구.*", "$1");
+            if (!exitNumber.equals(description)) {
+                return exitNumber + "번 출구";
+            }
+        }
+
+        return null;
+    }
+
     private List<String> extractStationNames(Map<String, Object> route) {
         List<String> stationNames = new ArrayList<>();
 
@@ -452,7 +492,6 @@ public class TmapRouteService {
 
             for (Map<String, Object> leg : legs) {
                 String mode = (String) leg.get("mode");
-
                 if (!"WALK".equals(mode)) {
                     String startName = getLocationName(leg, "start");
                     String endName = getLocationName(leg, "end");
@@ -509,30 +548,6 @@ public class TmapRouteService {
         return RouteResponse.Location.builder().name("도착지").lat(0.0).lon(0.0).build();
     }
 
-    private void addRoutePointsFromLinestring(List<RouteResponse.RoutePoint> routePoints, String linestring, int segmentIndex) {
-        if (linestring == null || linestring.trim().isEmpty()) {
-            return;
-        }
-
-        try {
-            String[] coordinates = linestring.split(" ");
-            for (String coord : coordinates) {
-                String[] lonLat = coord.split(",");
-                if (lonLat.length >= 2) {
-                    Double lon = Double.parseDouble(lonLat[0]);
-                    Double lat = Double.parseDouble(lonLat[1]);
-                    routePoints.add(RouteResponse.RoutePoint.builder()
-                            .lon(lon)
-                            .lat(lat)
-                            .segmentIndex(segmentIndex)
-                            .build());
-                }
-            }
-        } catch (Exception e) {
-            log.warn("좌표 파싱 실패: {}", linestring, e);
-        }
-    }
-
     private RouteResponse.Location createLocationFromLeg(Map<String, Object> leg, String locationType) {
         if (leg.containsKey(locationType)) {
             @SuppressWarnings("unchecked")
@@ -547,7 +562,30 @@ public class TmapRouteService {
         return RouteResponse.Location.builder().name("").lat(0.0).lon(0.0).build();
     }
 
-    private String createDetailedGuidanceText(Map<String, Object> leg) {
+    private String extractLineString(Map<String, Object> leg) {
+        String mode = (String) leg.get("mode");
+        String lineString = "";
+
+        if ("WALK".equals(mode) && leg.containsKey("steps")) {
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> steps = (List<Map<String, Object>>) leg.get("steps");
+
+            for (Map<String, Object> step : steps) {
+                String stepLinestring = (String) step.get("linestring");
+                if (stepLinestring != null) {
+                    lineString += stepLinestring + " ";
+                }
+            }
+        } else if (leg.containsKey("passShape")) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> passShape = (Map<String, Object>) leg.get("passShape");
+            lineString = (String) passShape.get("linestring");
+        }
+
+        return lineString != null ? lineString.trim() : "";
+    }
+
+    private String createSimpleGuidanceText(Map<String, Object> leg) {
         if (leg == null) return null;
 
         String mode = (String) leg.get("mode");
@@ -556,33 +594,45 @@ public class TmapRouteService {
         Integer distance = getIntegerValue(leg, "distance", 0);
         Integer time = getIntegerValue(leg, "sectionTime", 0);
         String route = (String) leg.get("route");
-        String routeColor = (String) leg.get("routeColor");
 
         if ("WALK".equals(mode)) {
-            return String.format("🚶 %s에서 %s까지 도보 %dm (%d분)",
+            return String.format("%s에서 %s까지 도보 %dm (%d분)",
                     startName, endName, distance, time / 60);
         } else if ("BUS".equals(mode)) {
             String busInfo = route != null ? route : "버스";
-            String colorInfo = routeColor != null ? " (#" + routeColor + ")" : "";
-            return String.format("🚌 %s에서 %s%s 탑승 → %s (%d분, %dm)",
-                    startName, busInfo, colorInfo, endName, time / 60, distance);
+            String formattedEndName = formatStationNameWithExit(endName);
+            return String.format("%s에서 %s 탑승 → %s (%d분, %dm)",
+                    startName, busInfo, formattedEndName, time / 60, distance);
         } else if ("SUBWAY".equals(mode)) {
             String subwayInfo = route != null ? route : "지하철";
-            String colorInfo = routeColor != null ? " (#" + routeColor + ")" : "";
-            return String.format("🚇 %s에서 %s%s 탑승 → %s (%d분, %dm)",
-                    startName, subwayInfo, colorInfo, endName, time / 60, distance);
-        } else if ("TRAIN".equals(mode)) {
-            String trainInfo = route != null ? route : "기차";
-            return String.format("🚄 %s에서 %s 탑승 → %s (%d분, %dm)",
-                    startName, trainInfo, endName, time / 60, distance);
-        } else if ("EXPRESSBUS".equals(mode)) {
-            String busInfo = route != null ? route : "고속버스";
-            return String.format("🚐 %s에서 %s 탑승 → %s (%d분, %dm)",
-                    startName, busInfo, endName, time / 60, distance);
+            String formattedEndName = formatStationNameWithExit(endName);
+            return String.format("%s에서 %s 탑승 → %s (%d분, %dm)",
+                    startName, subwayInfo, formattedEndName, time / 60, distance);
         }
 
-        return String.format("🚗 %s에서 %s까지 %s 이용 (%d분, %dm)",
-                startName, endName, mode, time / 60, distance);
+        String formattedEndName = formatStationNameWithExit(endName);
+        return String.format("%s에서 %s까지 %s 이용 (%d분, %dm)",
+                startName, formattedEndName, mode, time / 60, distance);
+    }
+
+    private String formatStationNameWithExit(String locationName) {
+        if (locationName == null || locationName.trim().isEmpty()) {
+            return locationName;
+        }
+
+        // "역삼역6번출구" → "역삼역 6번 출구"
+        if (locationName.contains("번출구")) {
+            java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("(.+?)(\\d+)번출구");
+            java.util.regex.Matcher matcher = pattern.matcher(locationName);
+
+            if (matcher.find()) {
+                String stationName = matcher.group(1).trim();  // "역삼역"
+                String exitNumber = matcher.group(2);          // "6"
+                return stationName + " " + exitNumber + "번 출구";  // "역삼역 6번 출구"
+            }
+        }
+
+        return locationName;
     }
 
     private String extractBusNumber(String routeString) {
@@ -590,12 +640,29 @@ public class TmapRouteService {
             return null;
         }
 
-        // "간선:13-4" → "13-4"
         if (routeString.contains(":")) {
             return routeString.split(":")[1].trim();
         }
 
         return routeString.trim();
+    }
+
+    private String extractExitInfo(String locationName) {
+        if (locationName == null || locationName.trim().isEmpty()) {
+            return null;
+        }
+
+        if (locationName.contains("번출구")) {
+            String[] parts = locationName.split("번출구");
+            if (parts.length > 0) {
+                String exitNumber = parts[0].replaceAll(".*?([0-9]+)$", "$1");
+                if (!exitNumber.isEmpty()) {
+                    return exitNumber + "번 출구";
+                }
+            }
+        }
+
+        return null;
     }
 
     private String getLocationName(Map<String, Object> leg, String locationType) {
@@ -608,10 +675,6 @@ public class TmapRouteService {
     }
 
     private RouteResponse createFallbackResponse() {
-        List<RouteResponse.RoutePoint> fallbackPoints = new ArrayList<>();
-        fallbackPoints.add(RouteResponse.RoutePoint.builder().lat(37.2816).lon(127.0453).segmentIndex(0).build());
-        fallbackPoints.add(RouteResponse.RoutePoint.builder().lat(37.2798).lon(127.0435).segmentIndex(0).build());
-
         List<RouteResponse.GuideInfo> fallbackGuides = new ArrayList<>();
         fallbackGuides.add(RouteResponse.GuideInfo.builder()
                 .guidance("기본 경로 정보")
@@ -686,6 +749,7 @@ public class TmapRouteService {
         private int transferCount;
         private List<String> stationNames;
         private AccessibilityService.RouteAccessibilityScore accessibilityScore;
+        private double weightedScore;
 
         public static RouteCandidateBuilder builder() {
             return new RouteCandidateBuilder();
@@ -700,6 +764,10 @@ public class TmapRouteService {
         public int getTransferCount() { return transferCount; }
         public List<String> getStationNames() { return stationNames; }
         public AccessibilityService.RouteAccessibilityScore getAccessibilityScore() { return accessibilityScore; }
+        public double getWeightedScore() { return weightedScore; }
+
+        // Setter for weighted score
+        public void setWeightedScore(double weightedScore) { this.weightedScore = weightedScore; }
 
         public static class RouteCandidateBuilder {
             private RouteCandidate candidate = new RouteCandidate();

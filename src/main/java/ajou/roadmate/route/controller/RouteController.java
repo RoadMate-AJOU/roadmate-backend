@@ -1,5 +1,6 @@
 package ajou.roadmate.route.controller;
 
+import ajou.roadmate.global.utils.UserContext;
 import ajou.roadmate.route.dto.RouteRequest;
 import ajou.roadmate.route.dto.RouteResponse;
 import ajou.roadmate.route.service.TmapRouteService;
@@ -10,6 +11,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,6 +28,7 @@ import org.springframework.web.bind.annotation.*;
 public class RouteController {
 
     private final TmapRouteService tmapRouteService;
+    private final UserContext userContext;
 
     @Operation(
             summary = "경로 탐색",
@@ -56,13 +59,16 @@ public class RouteController {
     @PostMapping("/search")
     public ResponseEntity<RouteResponse> searchRoute(
             @Parameter(description = "경로 탐색 요청 정보", required = true)
-            @Valid @RequestBody RouteRequest request) {
+            @Valid @RequestBody RouteRequest request,
+            HttpServletRequest httpRequest) {
 
-        log.info("경로 탐색 요청 - 출발지: {} ({}, {}), 목적지: {} ({}, {})",
-                request.getStartName(), request.getStartLat(), request.getStartLon(),
+        String resolvedUserId = userContext.resolveUserId(httpRequest);
+
+        log.info("경로 탐색 요청 - 사용자: {}, 출발지: {} ({}, {}), 목적지: {} ({}, {})",
+                resolvedUserId, request.getStartName(), request.getStartLat(), request.getStartLon(),
                 request.getEndName(), request.getEndLat(), request.getEndLon());
 
-        RouteResponse response = tmapRouteService.searchRoute(request);
+        RouteResponse response = tmapRouteService.searchRoute(request, resolvedUserId);
 
         log.info("경로 탐색 완료 - 총 거리: {}m, 총 시간: {}초, 길안내 수: {}",
                 response.getTotalDistance(), response.getTotalTime(),
