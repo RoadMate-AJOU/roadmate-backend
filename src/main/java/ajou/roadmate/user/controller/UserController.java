@@ -2,6 +2,7 @@ package ajou.roadmate.user.controller;
 
 import ajou.roadmate.user.domain.User;
 import ajou.roadmate.user.dto.SignInRequest;
+import ajou.roadmate.user.dto.SignInResponse;
 import ajou.roadmate.user.dto.SignUpRequest;
 import ajou.roadmate.user.dto.SignUpResponse;
 import ajou.roadmate.user.service.AuthService;
@@ -26,9 +27,9 @@ public class UserController {
     }
 
     @PostMapping("/signin")
-    public ResponseEntity<String> signIn(@RequestBody SignInRequest signInRequest) {
-        String token = authService.signIn(signInRequest);
-        return ResponseEntity.ok(token);
+    public ResponseEntity<SignInResponse> signIn(@RequestBody SignInRequest signInRequest) {
+        SignInResponse signInResponse = authService.signIn(signInRequest);
+        return ResponseEntity.ok(signInResponse);
     }
 
     @PostMapping("/logout")
