@@ -1,5 +1,7 @@
 package ajou.roadmate.gpt.service;
 
+import ajou.roadmate.global.exception.CustomException;
+import ajou.roadmate.global.exception.GPTErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
@@ -19,7 +21,7 @@ public class FeedbackService {
         Set<String> validCategories = Set.of("walk", "transfer", "totalTime", "elevator", "escalator");
 
         if (!validCategories.contains(feedbackCategory)) {
-            throw new IllegalArgumentException("Invalid feedback category: " + feedbackCategory);
+            throw new CustomException(GPTErrorCode.INVALID_FEEDBACK_CATEGORY);
         }
 
         String key = "feedback_count:" + userId;

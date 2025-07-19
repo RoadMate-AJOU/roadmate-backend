@@ -91,6 +91,8 @@ public class OpenAiNlpService {
     - "bus_station_info"
     - "subway_station_info"
     - "accessibility_info"
+    - "current_location"
+    - "feedback"
     - "other_inquiries"
 
     For "section_time" the "mode" entity must be one of "WALK", "BUS", or "SUBWAY".
@@ -135,6 +137,16 @@ public class OpenAiNlpService {
         "intent": "bus_number_info", 
         "entities": {}, 
         "responseText": "타야 할 버스를 안내드릴게요."
+    }
+    
+    Example 3.1 (Guidance):
+    User: "나 버스 어디서 타야돼?"
+    Assistant: {
+        "intent": "bus_number_info", 
+        "entities": {
+            "position": "start"
+        }, 
+        "responseText": "승차할 버스 정류장을 알려드릴게요."
     }
 
     Example 4 (Section time by mode):
