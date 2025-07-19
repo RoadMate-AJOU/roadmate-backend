@@ -13,7 +13,8 @@ public enum GPTErrorCode implements ErrorCode{
     CONTEXT_NOT_FOUND(HttpStatus.NOT_FOUND, "해당 세션의 컨텍스트가 존재하지 않습니다."),
     CONTEXT_DESERIALIZE_FAIL(HttpStatus.BAD_REQUEST, "컨텍스트 역직렬화 실패"),
     CONTEXT_LOOKUP_ERROR(HttpStatus.BAD_REQUEST, "컨텍스트 조회 중 오류 발생"),
-    GPT_ANALYSIS_FAIL(HttpStatus.BAD_REQUEST, "GPT 분석 실패");
+    GPT_ANALYSIS_FAIL(HttpStatus.BAD_REQUEST, "GPT 분석 실패"),
+    INVALID_FEEDBACK_CATEGORY(HttpStatus.BAD_REQUEST, "유효하지 않은 피드백 카테고리입니다.");
 
     private final HttpStatus status;
     private final String message;

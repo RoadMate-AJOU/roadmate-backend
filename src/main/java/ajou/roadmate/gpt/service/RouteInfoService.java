@@ -45,6 +45,8 @@ public class RouteInfoService {
     }
 
     private String getTotalFare(RouteResponse route) {
+        if(route.getTotalFare()==null)
+            return "현재 경로에 요금이 존재하지 않습니다.";
         return "총 요금은 약 " + route.getTotalFare() + "원입니다.";
     }
 
