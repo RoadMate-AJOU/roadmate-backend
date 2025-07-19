@@ -76,7 +76,7 @@ public class RouteResponse {
     @NoArgsConstructor
     @Schema(description = "길안내 정보")
     public static class GuideInfo {
-        @Schema(description = "안내 문구", example = "아주로을 따라 500m 직진하세요", required = true)
+        @Schema(description = "안내 문구", example = "신촌에서 지하철 탑승 → 역삼역 6번 출구", required = true)
         private String guidance;
 
         @Schema(description = "거리(미터)", example = "500", required = true)
@@ -88,7 +88,7 @@ public class RouteResponse {
         @Schema(description = "교통수단 타입", example = "WALK", allowableValues = {"WALK", "BUS", "SUBWAY", "TRAIN"})
         private String transportType;
 
-        @Schema(description = "도로명 또는 노선명", example = "아주로")
+        @Schema(description = "도로명 또는 노선명", example = "수도권2호선")
         private String routeName;
 
         @Schema(description = "버스 번호 (정제된)", example = "13-4")
@@ -96,6 +96,9 @@ public class RouteResponse {
 
         @Schema(description = "버스 노선 ID", example = "11504001")
         private String busRouteId;
+
+        @Schema(description = "노선 색상 코드", example = "009D3E")
+        private String color;
 
         @Schema(description = "시작 위치")
         private Location startLocation;
