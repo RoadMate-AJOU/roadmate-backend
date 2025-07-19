@@ -5,22 +5,19 @@ import ajou.roadmate.global.exception.UserErrorCode;
 import ajou.roadmate.user.domain.User;
 import ajou.roadmate.user.dto.SignUpRequest;
 import ajou.roadmate.user.dto.SignUpResponse;
+import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
 @Service
+@RequiredArgsConstructor
 public class UserService {
 
     private static final String USER_KEY_PREFIX = "user:";
     private static final String USER_ID_SEQ_KEY = "user:id:seq";
 
     private final RedisTemplate<String, User> userRedisTemplate;
-
-    @Autowired
-    public UserService(RedisTemplate<String, User> userRedisTemplate) {
-        this.userRedisTemplate = userRedisTemplate;
-    }
 
     public SignUpResponse signUp(SignUpRequest request) {
         Long newId = userRedisTemplate.opsForValue().increment(USER_ID_SEQ_KEY);

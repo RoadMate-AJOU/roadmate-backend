@@ -4,6 +4,7 @@ import ajou.roadmate.global.exception.CustomException;
 import ajou.roadmate.global.exception.UserErrorCode;
 import ajou.roadmate.user.domain.User;
 import ajou.roadmate.user.dto.SignInRequest;
+import ajou.roadmate.user.dto.SignInResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
@@ -21,7 +22,7 @@ public class AuthService {
     private final RedisTemplate<String, String> stringRedisTemplate;
     private final RedisTemplate<String, User> userRedisTemplate;
 
-    public String signIn(SignInRequest request) {
+    public SignInResponse signIn(SignInRequest request) {
         for (int i = 1; ; i++) {
             User user = userRedisTemplate.opsForValue().get("user:" + i);
             if (user == null) break;
@@ -31,7 +32,10 @@ public class AuthService {
 
                 String sessionToken = UUID.randomUUID().toString();
                 stringRedisTemplate.opsForValue().set(SESSION_PREFIX + sessionToken, user.getId(), SESSION_TTL);
-                return sessionToken;
+                return SignInResponse.builder()
+                        .id(user.getId())
+                        .token(sessionToken)
+                        .build();
             }
         }
         throw new CustomException(UserErrorCode.USER_NOT_FOUNT);
