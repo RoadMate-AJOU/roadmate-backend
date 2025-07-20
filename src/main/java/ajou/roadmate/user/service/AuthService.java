@@ -6,6 +6,7 @@ import ajou.roadmate.user.domain.User;
 import ajou.roadmate.user.dto.SignInRequest;
 import ajou.roadmate.user.dto.SignInResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -13,11 +14,12 @@ import java.time.Duration;
 import java.util.UUID;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class AuthService {
 
     private static final String SESSION_PREFIX = "session:";
-    private static final Duration SESSION_TTL = Duration.ofHours(1);
+    private static final Duration SESSION_TTL = Duration.ofHours(24);
 
     private final RedisTemplate<String, String> stringRedisTemplate;
     private final RedisTemplate<String, User> userRedisTemplate;
@@ -46,6 +48,7 @@ public class AuthService {
     }
 
     public User getUserBySession(String sessionToken) {
+        log.info("session token ${}", sessionToken);
         String userId = stringRedisTemplate.opsForValue().get(SESSION_PREFIX + sessionToken);
         if (userId == null)
             throw new CustomException(UserErrorCode.USER_NOT_FOUND);

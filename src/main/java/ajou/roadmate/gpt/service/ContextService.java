@@ -19,7 +19,7 @@ public class ContextService {
     private final RedisTemplate<String, ChatContext> chatContextRedisTemplate;
 
     private static final String CONTEXT_PREFIX = "nlp_context:";
-    private static final Duration CONTEXT_TTL = Duration.ofMinutes(30);
+    private static final Duration CONTEXT_TTL = Duration.ofMinutes(360);
 
     public ChatContext getContext(String sessionId) {
         try {
