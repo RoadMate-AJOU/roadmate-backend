@@ -22,14 +22,14 @@ public class NlpOrchestrationService {
     private final RouteInfoService routeInfoService;
     private final FeedbackService feedbackService;
 
-    public NlpResponseDto orchestrate(NlpRequestDto request) {
+    public NlpResponseDto orchestrate(NlpRequestDto request, String userId) {
         ChatContext context;
 
         try {
-            context = contextService.getContext(request.getSessionId());
+            context = contextService.getContext(userId);
         } catch (CustomException e) {
             if (e.getErrorCode() == GPTErrorCode.CONTEXT_NOT_FOUND) {
-                context = new ChatContext(request.getSessionId());
+                context = new ChatContext(userId);
             } else {
                 throw e;
             }

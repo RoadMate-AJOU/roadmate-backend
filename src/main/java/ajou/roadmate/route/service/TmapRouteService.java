@@ -50,7 +50,7 @@ public class TmapRouteService {
             log.info("목적지: {} ({}, {})", request.getEndName(), request.getEndLat(), request.getEndLon());
 
             TmapRouteResponse tmapResponse = callTmapRouteAPI(request);
-            RouteResponse response = processTmapRouteResponse(tmapResponse, request.getSessionId(), userId);
+            RouteResponse response = processTmapRouteResponse(tmapResponse, userId);
 
             log.info("경로 탐색 완료 - 총 거리: {}m, 총 시간: {}초",
                     response.getTotalDistance(), response.getTotalTime());
@@ -59,11 +59,11 @@ public class TmapRouteService {
             try {
                 ChatContext context;
                 try {
-                    context = contextService.getContext(request.getSessionId());
+                    context = contextService.getContext(userId);
                 } catch (CustomException e) {
                     // 컨텍스트가 없으면 새로 생성
                     context = new ChatContext();
-                    context.setSessionId(request.getSessionId());
+                    context.setSessionId(userId);
                 }
 
                 context.setRouteResponse(response);
@@ -136,7 +136,7 @@ public class TmapRouteService {
         }
     }
 
-    private RouteResponse processTmapRouteResponse(TmapRouteResponse tmapResponse, String sessionId, String userId) {
+    private RouteResponse processTmapRouteResponse(TmapRouteResponse tmapResponse, String userId) {
         if (tmapResponse == null) {
             throw new CustomException(RouteErrorCode.ROUTE_NOT_FOUND);
         }

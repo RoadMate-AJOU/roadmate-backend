@@ -38,7 +38,7 @@ public class AuthService {
                         .build();
             }
         }
-        throw new CustomException(UserErrorCode.USER_NOT_FOUNT);
+        throw new CustomException(UserErrorCode.USER_NOT_FOUND);
     }
 
     public void logout(String sessionToken) {
@@ -48,7 +48,7 @@ public class AuthService {
     public User getUserBySession(String sessionToken) {
         String userId = stringRedisTemplate.opsForValue().get(SESSION_PREFIX + sessionToken);
         if (userId == null)
-            throw new CustomException(UserErrorCode.USER_NOT_FOUNT);
+            throw new CustomException(UserErrorCode.USER_NOT_FOUND);
         return userRedisTemplate.opsForValue().get("user:" + userId);
     }
 }

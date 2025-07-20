@@ -1,5 +1,7 @@
 package ajou.roadmate.gpt.controller;
 
+import ajou.roadmate.global.exception.CustomException;
+import ajou.roadmate.global.exception.UserErrorCode;
 import ajou.roadmate.global.utils.UserContext;
 import ajou.roadmate.gpt.dto.NlpRequestDto;
 import ajou.roadmate.gpt.dto.NlpResponseDto;
@@ -18,17 +20,17 @@ import org.springframework.web.bind.annotation.RestController;
 public class NlpController {
 
     private final NlpOrchestrationService orchestrationService;
+    private final UserContext userContext;
 
     @PostMapping("/chat")
     public ResponseEntity<NlpResponseDto> handleChat(HttpServletRequest request, @RequestBody NlpRequestDto requestDto) {
-        if (requestDto.getSessionId() == null || requestDto.getSessionId().isBlank()) {
-            return ResponseEntity.badRequest().body(
-                    NlpResponseDto.builder()
-                            .responseMessage("sessionId는 필수입니다.")
-                            .status(NlpResponseDto.Status.ERROR)
-                            .build());
+
+        String userId = userContext.resolveUserId(request);
+        if(userId==null){
+            throw new CustomException(UserErrorCode.SESSION_NOT_FOUND);
         }
-        NlpResponseDto response = orchestrationService.orchestrate(requestDto);
+
+        NlpResponseDto response = orchestrationService.orchestrate(requestDto, userId);
         return ResponseEntity.ok(response);
     }
 
